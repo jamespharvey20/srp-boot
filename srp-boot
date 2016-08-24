@@ -140,17 +140,34 @@ if [ ! -w "${ADD_TARGET}" ]; then
 	exit 7;
 fi
 
+PORT_DIR="$INFINIBAND_CLASS_ROOT_DIR/${hca}/ports/${port_number}"
+if [ ! -r "${PORT_DIR}/state" ]; then
+	echo "srp-boot: ${PORT_DIR}/state does not exist or is not readable."
+	exit 8
+fi
+
+unknown_error=0
 for i in $( seq 100 ); do
-	if [ $i -gt 1 ]; then
-		echo "srp-boot: Retrying in 1 second (status -22 means PXE environment hasn't dropped its SRP connection yet, this can take up to 30 seconds)..."
+	port_state=$( cat "${PORT_DIR}/state" )
+	if [ "${port_state}" != "4: ACTIVE" ]; then
+		echo "srp-boot: Retrying in 1 second, ${PORT_DIR}/state is \"${port_state}\" instead of \"4: ACTIVE\".  Likely waiting for connection to InfiniBand Service Manager..."
+		sleep 1
+		continue
+	elif [ $unknown_error -eq 1 ]; then
+		echo "srp-boot: Retrying in 1 second, unknown error..."
 		sleep 1
 	fi
-	( echo "id_ext=${id_ext},ioc_guid=${ioc_guid},dgid=${dgid},pkey=${pkey},service_id=${service_id},initiator_ext=${initiator_ext}" > ${ADD_TARGET} ) > /dev/null 2>&1
+
+	echo "id_ext=${id_ext},ioc_guid=${ioc_guid},dgid=${dgid},pkey=${pkey},service_id=${service_id},initiator_ext=${initiator_ext}" > ${ADD_TARGET}
+
 	if [ $? -eq 0 ]; then
 		break
 	fi
+
+	unknown_error=1
+
 	if [ $i -eq 100 ]; then
 		echo "srp-boot: Retried 100 times, giving up..."
-		exit 8;
+		exit 9
 	fi
 done
