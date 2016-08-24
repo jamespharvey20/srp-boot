@@ -2,6 +2,7 @@
 
 SBFT_DIR="/sys/firmware/sbft"
 INFINIBAND_SRP_CLASS_ROOT_DIR="/sys/class/infiniband_srp"
+INFINIBAND_CLASS_ROOT_DIR="/sys/class/infiniband"
 
 # Load kernel modules
 
@@ -20,7 +21,7 @@ fi
 
 # Load sBFT (SRP Boot Firmware Table) data
 
-for sbft_data in srp_initiator_port_identifier srp_target_port_identifier ib_destination_gid ib_partition_key ib_service_identifier; do
+for sbft_data in srp_initiator_port_identifier srp_target_port_identifier ib_destination_gid ib_partition_key ib_service_identifier ib_source_gid; do
 	if [ ! -r "${SBFT_DIR}/$sbft_data" ]; then
 		echo "srp-boot: ${SBFT_DIR}/$sbft_data does not exist or is not readable, ib_sbft module must have failed to correctly parse this."
 		exit 3;
@@ -48,26 +49,81 @@ service_id="$( echo ${ib_service_identifier} | sed 's/://g' )"
 #initiator_ext - 16 hex digits giving the 8 byte identifier extension (first half) of the 16 byte SRP initiator port identifier
 initiator_ext="$( echo ${srp_initiator_port_identifier} | sed 's/://g; s/\(.\{16\}\).*/\1/' )"
 
-# Load kernel arguments srp.hca and srp.port_number
+# Set hca and port_number
 
+#    1. This should never be needed, but they can be given as kernel arguments srp.hca and srp.port_number
+
+found_kernel_arguments=0
 set -- $( cat /proc/cmdline )
 for argument in "$@"; do
-	if [ -z "$hca" ]; then
-		hca="$( echo ${argument} | grep -e '^srp.hca=' | sed 's/^srp.hca=//' )"
+	result="$( echo ${argument} | grep -e '^srp.hca=' | sed 's/^srp.hca=//' )"
+	if [ "${result}" != "" ]; then
+		found_kernel_arguments=1
+		kernel_hca="${result}"
 	fi
-	if [ -z "$port_number" ]; then
-		port_number="$( echo ${argument} | grep -e '^srp.port_number=' | sed 's/^srp.port_number=//' )"
+	result="$( echo ${argument} | grep -e '^srp.port_number=' | sed 's/^srp.port_number=//' )"
+	if [ "${result}" != "" ]; then
+		found_kernel_arguments=1
+		kernel_port_number="${result}"
 	fi
 done
 
-if [ -z "${hca}" ]; then
-	echo "srp-boot: Kernel argument srp.hca not found."
-	exit 4;
+#       a. Only use them if both are given
+
+if [ ! -z $kernel_hca ]; then
+	if [ ! -z $kernel_port_number ]; then
+		hca="${kernel_hca}"
+		port_number="${kernel_port_number}"
+	fi
 fi
 
-if [ -z "${port_number}" ]; then
-	echo "srp-boot: Kernel argument srp.port_number not found."
-	exit 5;
+#   2. If kernel arguments aren't given, they should always be able to be auto-detected by matching ib_source_gid
+
+if [ -z $hca ]; then
+	if [ -z $port_number ]; then
+		if [ $found_kernel_arguments -eq 1 ]; then
+			echo "srp_boot: If you are going to give srp.hca or srp.port_number as kernel arguments, you must give both, attempting auto-detection..."
+		fi
+		for srp in $INFINIBAND_SRP_CLASS_ROOT_DIR/*; do
+			if [ ! -r "${srp}/ibdev" ]; then
+				echo "srp_boot: ${srp}/ibdev does not exist or is not readable, skipping"
+				continue
+			fi
+			auto_ibdev=$( cat "${srp}/ibdev" )
+
+			if [ ! -r "${srp}/port" ]; then
+				echo "srp_boot: ${srp}/port does not exist or is not readable, skipping"
+				continue
+			fi
+			auto_port=$( cat "${srp}/port" )
+
+			PORT_DIR="$INFINIBAND_CLASS_ROOT_DIR/${auto_ibdev}/ports/${auto_port}"
+
+			if [ ! -r "${PORT_DIR}/gids/0" ]; then
+				echo "srp_boot: ${PORT_DIR}/gids/0 does not exist or is not readable, skipping"
+				continue
+			fi
+			port_gid=$( cat "${PORT_DIR}/gids/0" )
+
+			if [ "${port_gid}" == "${ib_source_gid}" ]; then
+				hca="${auto_ibdev}"
+				port_number="${auto_port}"
+				break
+			fi
+		done
+
+		# Error if port_number is still unset
+		if [[ -z $port_number ]]; then
+			echo "srp-boot: Couldn't auto-detect port_number by ib_source_gid, and kernel argument srp.port_number not found.  Either HCA kernel driver isn't properly loaded or wrong kernel parameter was given."
+			exit 4;
+		fi
+	fi
+
+	# Error if hca is still unset
+	if [[ -z $hca ]]; then
+		echo "srp-boot: Couldn't auto-detect hca by ib_source_gid, and kernel argument srp.hca not found.  Either HCA kernel driver isn't properly loaded or wrong kernel parameter was given."
+		exit 5;
+	fi
 fi
 
 # Initiate SRP connection
@@ -75,13 +131,13 @@ fi
 HCA_DIR="${INFINIBAND_SRP_CLASS_ROOT_DIR}/srp-${hca}-${port_number}"
 if [ ! -d "${HCA_DIR}" ]; then
 	echo "srp-boot: ${HCA_DIR} does not exist, either HCA kernel driver isn't properly loaded or wrong kernel parameter was given."
-	exit 4;
+	exit 6;
 fi
 
 ADD_TARGET="${HCA_DIR}/add_target"
 if [ ! -w "${ADD_TARGET}" ]; then
 	echo "srp-boot: ${ADD_TARGET} does not exist or is not writable."
-	exit 5;
+	exit 7;
 fi
 
 for i in $( seq 100 ); do
@@ -94,7 +150,7 @@ for i in $( seq 100 ); do
 		break
 	fi
 	if [ $i -eq 100 ]; then
-		echo "srp-boot: Retried 100 times, haven't seen it take more than 30, don't think it's happening..."
-		exit 6;
+		echo "srp-boot: Retried 100 times, giving up..."
+		exit 8;
 	fi
 done
