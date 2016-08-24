@@ -7,13 +7,13 @@ INFINIBAND_SRP_CLASS_ROOT_DIR="/sys/class/infiniband_srp"
 
 for module in ib_sbft ib_core ib_umad ib_uverbs ib_ucm rdma_ucm ib_srp; do
 	modprobe ${module}
-	if [[ $? -ne 0 ]]; then
+	if [ $? -ne 0 ]; then
 		echo "srp-boot: Failed to load module ${module}"
 		exit 1;
 	fi
 done
 
-if [[ ! -d ${SBFT_DIR} ]]; then
+if [ ! -d "${SBFT_DIR}" ]; then
 	echo "srp-boot: ${SBFT_DIR} does not exist, ib_sbft module must have improperly loaded."
 	exit 2;
 fi
@@ -21,7 +21,7 @@ fi
 # Load sBFT (SRP Boot Firmware Table) data
 
 for sbft_data in srp_initiator_port_identifier srp_target_port_identifier ib_destination_gid ib_partition_key ib_service_identifier; do
-	if [[ ! -r ${SBFT_DIR}/$sbft_data ]]; then
+	if [ ! -r "${SBFT_DIR}/$sbft_data" ]; then
 		echo "srp-boot: ${SBFT_DIR}/$sbft_data does not exist or is not readable, ib_sbft module must have failed to correctly parse this."
 		exit 3;
 	fi
@@ -52,20 +52,20 @@ initiator_ext="$( echo ${srp_initiator_port_identifier} | sed 's/://g; s/\(.\{16
 
 set -- $( cat /proc/cmdline )
 for argument in "$@"; do
-	if [[ -z $hca ]]; then
+	if [ -z "$hca" ]; then
 		hca="$( echo ${argument} | grep -e '^srp.hca=' | sed 's/^srp.hca=//' )"
 	fi
-	if [[ -z $port_number ]]; then
+	if [ -z "$port_number" ]; then
 		port_number="$( echo ${argument} | grep -e '^srp.port_number=' | sed 's/^srp.port_number=//' )"
 	fi
 done
 
-if [[ -z "${hca}" ]]; then
+if [ -z "${hca}" ]; then
 	echo "srp-boot: Kernel argument srp.hca not found."
 	exit 4;
 fi
 
-if [[ -z "${port_number}" ]]; then
+if [ -z "${port_number}" ]; then
 	echo "srp-boot: Kernel argument srp.port_number not found."
 	exit 5;
 fi
@@ -73,27 +73,27 @@ fi
 # Initiate SRP connection
 
 HCA_DIR="${INFINIBAND_SRP_CLASS_ROOT_DIR}/srp-${hca}-${port_number}"
-if [[ ! -d ${HCA_DIR} ]]; then
+if [ ! -d "${HCA_DIR}" ]; then
 	echo "srp-boot: ${HCA_DIR} does not exist, either HCA kernel driver isn't properly loaded or wrong kernel parameter was given."
 	exit 4;
 fi
 
 ADD_TARGET="${HCA_DIR}/add_target"
-if [[ ! -w ${ADD_TARGET} ]]; then
+if [ ! -w "${ADD_TARGET}" ]; then
 	echo "srp-boot: ${ADD_TARGET} does not exist or is not writable."
 	exit 5;
 fi
 
 for i in $( seq 100 ); do
-	if [[ $i -gt 1 ]]; then
+	if [ $i -gt 1 ]; then
 		echo "srp-boot: Retrying in 1 second (status -22 means PXE environment hasn't dropped its SRP connection yet, this can take up to 30 seconds)..."
 		sleep 1
 	fi
 	( echo "id_ext=${id_ext},ioc_guid=${ioc_guid},dgid=${dgid},pkey=${pkey},service_id=${service_id},initiator_ext=${initiator_ext}" > ${ADD_TARGET} ) > /dev/null 2>&1
-	if [[ $? -eq 0 ]]; then
+	if [ $? -eq 0 ]; then
 		break
 	fi
-	if [[ $i -eq 100 ]]; then
+	if [ $i -eq 100 ]; then
 		echo "srp-boot: Retried 100 times, haven't seen it take more than 30, don't think it's happening..."
 		exit 6;
 	fi
