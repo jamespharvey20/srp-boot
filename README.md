@@ -3,6 +3,7 @@
 Run srp-boot in your initramfs, before it tries to use your SRP devices.
 
 Requires:
+* Your new root to be on the same target as your bootloader/kernel/initrd.  (It can be the same or different LUN.)
 * Your initramfs to load your HCA driver(s) before running.
 * Modprobe to find these kernel modules in your initramfs: ib_sbft, ib_core, ib_umad, ib_uverbs, ib_ucm, rdma_ucm, and ib_srp.
 
